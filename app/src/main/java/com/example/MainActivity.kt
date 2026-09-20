@@ -200,14 +200,20 @@ class MainActivity : ComponentActivity() {
                     this@MainActivity.filePathCallback?.onReceiveValue(null)
                     this@MainActivity.filePathCallback = filePathCallback
 
-                    val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE)
                         type = "*/*"
-                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+                        val acceptTypes = fileChooserParams?.acceptTypes?.filter { it.isNotBlank() }?.toTypedArray()
+                        if (!acceptTypes.isNullOrEmpty()) {
+                            putExtra(Intent.EXTRA_MIME_TYPES, acceptTypes)
+                        } else {
+                            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+                        }
                     }
+                    val chooserIntent = Intent.createChooser(intent, "اختر صورة أو فيديو")
 
                     try {
-                        fileChooserLauncher.launch(intent)
+                        fileChooserLauncher.launch(chooserIntent)
                         return true
                     } catch (e: Exception) {
                         Log.e(TAG, "Error launching file chooser", e)

@@ -230,7 +230,7 @@
           <h1 style="padding:20px">محمي 🔒</h1>
           <div style="padding:20px;max-width:340px;margin:auto;display:flex;flex-direction:column;gap:14px">
             <input id="adminCode" class="input" type="password" placeholder="أدخل رمز هنا..">
-            <button onclick="if(document.getElementById('adminCode').value==='1234'){isAdminUnlocked=true;renderAddPage()}else{alert('رمز غير صحيح')}" style="background:#e50914;color:#fff;border:none;padding:13px;border-radius:10px">فتح</button>
+            <button onclick="if(document.getElementById('adminCode').value==='hamza otmani'){isAdminUnlocked=true;renderAddPage()}else{alert('رمز غير صحيح')}" style="background:#e50914;color:#fff;border:none;padding:13px;border-radius:10px">فتح</button>
           </div>`;
         return;
       }
@@ -277,7 +277,7 @@
     window.handlePosterFile = (f) => {
       if (!f) return;
       let preview = document.getElementById("posterPreview");
-      let isVideo = f.type.startsWith("video/");
+      let isVideo = f.type.startsWith("video/") || /\.(mp4|webm|mkv|mov|avi|3gp)$/i.test(f.name);
       let url = URL.createObjectURL(f);
 
       preview.style.display = "block";
@@ -299,7 +299,7 @@
     window.handleVideoFile = (f) => {
       if (!f) return;
       let preview = document.getElementById("videoPreview");
-      let isVideo = f.type.startsWith("video/");
+      let isVideo = f.type.startsWith("video/") || /\.(mp4|webm|mkv|mov|avi|3gp)$/i.test(f.name);
       let url = URL.createObjectURL(f);
 
       preview.style.display = "block";
@@ -398,7 +398,7 @@
     window.handleEpVideoFile = (f) => {
       if (!f) return;
       let preview = document.getElementById("epVideoPreview");
-      let isVideo = f.type.startsWith("video/");
+      let isVideo = f.type.startsWith("video/") || /\.(mp4|webm|mkv|mov|avi|3gp)$/i.test(f.name);
       let url = URL.createObjectURL(f);
 
       preview.style.display = "block";
