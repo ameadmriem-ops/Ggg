@@ -31,7 +31,7 @@
     .media-preview-box{margin-top:10px;text-align:center;display:none}
     .media-preview-box img{max-width:140px;aspect-ratio:2/3;object-fit:cover;border-radius:8px;border:1px solid #333;display:inline-block}
     .media-preview-box video{width:100%;max-height:220px;border-radius:8px;background:#000;border:1px solid #333;display:inline-block}
-    .video-player-container{margin-top:12px;background:#000;border-radius:10px;overflow:hidden;border:1px solid #222;position:relative;min-height:200px;display:flex;align-items:center;justify-content:center}
+    .video-player-container{margin-top:12px;background:#000;border-radius:10px;overflow:hidden;border:1px solid #222;position:relative;min-height:220px;display:flex;align-items:center;justify-content:center}
     .video-error-banner{display:none;background:#1a0505;border:1px solid #e50914;color:#ff8888;padding:16px;border-radius:8px;margin-top:12px;text-align:right;font-size:14px;line-height:1.6}
     .video-error-banner b{color:#fff}
     @keyframes spin{to{transform:rotate(360deg)}}
@@ -139,6 +139,7 @@
 
     window.openDetails = (fid) => {
       let item = getItemByFirebaseId(fid);
+      if (!item) return;
       historyStack.push({ type: "page", page: currentPage });
       currentPage = "details";
       let addEpBtn = isAdminUnlocked ? `<button class="episode-btn" style="border:1px dashed #444;color:#aaa" onclick="renderAddEpisodeForm('${item.firebaseId}')">➕ إضافة حلقة</button>` : "";
@@ -173,10 +174,19 @@
       }, 1000);
     };
 
-    window.onRewardedAdClosed = () => { playRealVideo(localStorage.getItem("last_fid"), localStorage.getItem("last_idx")); };
-    window.onAdFailed = () => { playRealVideo(localStorage.getItem("last_fid"), localStorage.getItem("last_idx")); };
+    window.onRewardedAdClosed = () => {
+      let fid = localStorage.getItem("last_fid");
+      let idx = localStorage.getItem("last_idx");
+      playRealVideo(fid, idx);
+    };
 
-    // فحص نوع الرابط أو مصدر الفيديو
+    window.onAdFailed = () => {
+      let fid = localStorage.getItem("last_fid");
+      let idx = localStorage.getItem("last_idx");
+      playRealVideo(fid, idx);
+    };
+
+    // التمييز التلقائي بين أنواع مصادر الفيديو
     window.getVideoSourceType = (str) => {
       if (!str) return "empty";
       let s = str.trim();
@@ -186,68 +196,138 @@
       return "invalid";
     };
 
+    // تشغيل الفيديو الفعلي باستخدام HTML5 video المباشر
     window.playRealVideo = (fid, idx) => {
       let item = getItemByFirebaseId(fid);
-      if (!item) return;
-      let ep = item.episodes[idx];
-      let rawVideoUrl = (ep.video || "").trim();
-      let sourceType = getVideoSourceType(rawVideoUrl);
-
-      if (!rawVideoUrl || sourceType === "empty") {
-        main.innerHTML = `<button class="back-btn" onclick="openDetails('${item.firebaseId}')">← رجوع</button><div style="padding:12px"><h2>${ep.title}</h2><div style="padding:40px;text-align:center;color:#888">لا يوجد رابط فيديو متوفر</div></div>`;
+      if (!item) {
+        item = window.allContent.find(x => x.id === fid || x.firebaseId === fid);
+      }
+      if (!item) {
+        main.innerHTML = `<button class="back-btn" onclick="showPage('home')">← الرئيسية</button><div style="padding:40px;text-align:center;color:#888">تعذر العثور على العمل المطلوب</div>`;
         return;
       }
+
+      let episodeIndex = parseInt(idx, 10);
+      if (isNaN(episodeIndex)) episodeIndex = 0;
+      let ep = (item.episodes && item.episodes[episodeIndex]) ? item.episodes[episodeIndex] : null;
+
+      if (!ep) {
+        main.innerHTML = `<button class="back-btn" onclick="openDetails('${item.firebaseId}')">← رجوع</button><div style="padding:40px;text-align:center;color:#888">الحلقة غير متوفرة</div>`;
+        return;
+      }
+
+      let savedVideoUrl = (ep.video || "").trim();
+      let sourceType = getVideoSourceType(savedVideoUrl);
 
       main.innerHTML = `
         <button class="back-btn" onclick="openDetails('${item.firebaseId}')">← رجوع</button>
         <div style="padding:12px">
           <h2>${ep.title}</h2>
           <div class="video-player-container">
-            <video id="videoPlayer" style="width:100%;max-height:70vh;background:#000;display:block"></video>
+            <video id="videoPlayer" playsinline style="width:100%;max-height:70vh;background:#000;display:block"></video>
+            <div id="videoSpinner" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.75);padding:14px 20px;border-radius:10px;text-align:center;z-index:2">
+              <div style="width:36px;height:36px;border:3px solid #333;border-top-color:#e50914;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 8px"></div>
+              <span id="videoSpinnerText" style="font-size:12px;color:#eee">جاري التحميل...</span>
+            </div>
           </div>
           <div id="videoErrorBanner" class="video-error-banner"></div>
         </div>`;
 
       const video = document.getElementById("videoPlayer");
       const errBanner = document.getElementById("videoErrorBanner");
+      const spinner = document.getElementById("videoSpinner");
+      const spinnerText = document.getElementById("videoSpinnerText");
 
-      if (sourceType === "invalid") {
+      function showVideoError(msg) {
+        if (spinner) spinner.style.display = "none";
         if (errBanner) {
           errBanner.style.display = "block";
           errBanner.innerHTML = `
-            <b>⚠️ خطأ في الرابط:</b><br>
-            تعذر تشغيل الفيديو. تأكد أن الرابط مباشر ويدعم تشغيل الفيديو عبر المتصفح.
+            <b>⚠️ تنبيه في التشغيل:</b><br>
+            ${msg}
             <div style="margin-top:8px;font-size:12px;color:#aaa;direction:ltr;text-align:left;word-break:break-all">
-              ${rawVideoUrl}
+              ${savedVideoUrl}
             </div>`;
         }
+      }
+
+      if (!savedVideoUrl || sourceType === "empty") {
+        showVideoError("لا يوجد رابط فيديو متوفر لهذا العرض.");
+        return;
+      }
+
+      if (sourceType === "invalid") {
+        showVideoError("تعذر تشغيل الفيديو. تأكد أن الرابط مباشر ويدعم تشغيل الفيديو عبر المتصفح.");
         return;
       }
 
       if (video) {
-        video.onerror = () => {
-          if (errBanner) {
-            errBanner.style.display = "block";
-            errBanner.innerHTML = `
-              <b>⚠️ تنبيه في التشغيل:</b><br>
-              تعذر تشغيل الفيديو. تأكد أن الرابط مباشر ويدعم تشغيل الفيديو عبر المتصفح.
-              <div style="margin-top:8px;font-size:12px;color:#aaa;direction:ltr;text-align:left;word-break:break-all">
-                ${rawVideoUrl}
-              </div>`;
-          }
-        };
+        // معالجة الأحداث:
+        // 1. loadedmetadata
+        video.addEventListener("loadedmetadata", () => {
+          if (spinner) spinner.style.display = "none";
+          if (errBanner) errBanner.style.display = "none";
+        });
 
-        // تعيين الرابط مباشرة دون fetch() ودون تحويل إلى Blob أو Base64
-        video.src = rawVideoUrl;
-        video.controls = true;
-        video.playsInline = true;
+        // 2. waiting
+        video.addEventListener("waiting", () => {
+          if (spinner) {
+            spinner.style.display = "block";
+            if (spinnerText) spinnerText.innerText = "جاري التخزين المؤقت...";
+          }
+        });
+
+        // 3. stalled
+        video.addEventListener("stalled", () => {
+          if (spinner) {
+            spinner.style.display = "block";
+            if (spinnerText) spinnerText.innerText = "توقف التحميل مؤقتاً، بانتظار استجابة الخادم...";
+          }
+        });
+
+        video.addEventListener("canplay", () => {
+          if (spinner) spinner.style.display = "none";
+        });
+
+        video.addEventListener("playing", () => {
+          if (spinner) spinner.style.display = "none";
+          if (errBanner) errBanner.style.display = "none";
+        });
+
+        // 4. error
+        video.addEventListener("error", () => {
+          if (spinner) spinner.style.display = "none";
+          let err = video.error;
+          let reason = "تعذر تشغيل الفيديو. تأكد أن الرابط مباشر ويدعم تشغيل الفيديو عبر المتصفح.";
+          if (err) {
+            switch (err.code) {
+              case 1:
+                reason = "تم إلغاء تحميل الفيديو من قبل المتصفح.";
+                break;
+              case 2:
+                reason = "خطأ في الشبكة أثناء جلب الفيديو. تأكد من اتصال الإنترنت وصلاحية الرابط.";
+                break;
+              case 3:
+                reason = "فشل فك تشفير الفيديو (تأكد أن صيغة الفيديو مدعومة مثل MP4 أو WebM).";
+                break;
+              case 4:
+                reason = "تعذر تشغيل الفيديو. تأكد أن الرابط مباشر ويدعم تشغيل الفيديو عبر المتصفح.";
+                break;
+            }
+          }
+          showVideoError(reason);
+        });
+
+        // تطبيق المطلوب نصاً:
+        video.src = savedVideoUrl;
         video.preload = "metadata";
+        video.controls = true;
         video.load();
-        
+
         let playPromise = video.play();
         if (playPromise !== undefined) {
-          playPromise.catch(() => {
-            // تشغيل تلقائي قد يحتاج نقرة المستخدم في بعض الحالات
+          playPromise.catch((e) => {
+            console.log("Play interrupted or requires user action:", e);
           });
         }
       }
@@ -357,13 +437,11 @@
         preview.innerHTML = `
           <div style="color:#0f0;font-size:12px;margin-bottom:6px">✅ تم اختيار الفيديو: ${f.name}</div>
           <video controls playsinline src="${url}"></video>`;
-        // للفيديوهات المحلية: استخدم Object URL لتجنب تحويل الفيديوهات الضخمة إلى Base64 واستهلاك الذاكرة
         window.tempPosterData = url;
       } else {
         preview.innerHTML = `
           <div style="color:#0f0;font-size:12px;margin-bottom:6px">✅ تم اختيار الصورة: ${f.name}</div>
           <img src="${url}">`;
-        // للصور: قراءة معقولة الحجم كـ Base64
         if (f.size <= 2 * 1024 * 1024) {
           let r = new FileReader();
           r.onload = e => { window.tempPosterData = e.target.result; };
@@ -391,14 +469,9 @@
           <img src="${url}">`;
       }
 
-      // لا نحول الفيديو إلى Base64 نهائياً لتفادي استهلاك الذاكرة وحجم المستند في Firestore
-      // بل نستخدم Blob URL المحلي مباشرة للملفات المحلية
-      if (f.size > 2 * 1024 * 1024) {
-        window.tempVideoData = url;
-      } else {
-        // إذا كان ملفاً صغيراً جداً، يمكن استخدام URL أو FileReader
-        window.tempVideoData = url;
-      }
+      // لا نقوم بتحويل الفيديو إلى Base64 لتفادي استهلاك الذاكرة وحجم المستند في Firestore
+      // بل نستخدم Blob URL المباشر
+      window.tempVideoData = url;
     };
 
     window.lockAddPage = () => {
@@ -424,8 +497,11 @@
       let type = document.getElementById("addType").value,
           title = document.getElementById("addTitle").value.trim(),
           year = document.getElementById("addYear").value || 2024,
-          poster = document.getElementById("addPoster").value.trim() || window.tempPosterData,
-          video = document.getElementById("addVideo").value.trim() || window.tempVideoData,
+          posterInput = document.getElementById("addPoster").value.trim(),
+          poster = posterInput || window.tempPosterData,
+          videoInput = document.getElementById("addVideo").value.trim(),
+          // تخزين رابط الفيديو فقط دون تحويله إلى Base64 أو تنزيله
+          video = videoInput || window.tempVideoData,
           desc = document.getElementById("addDesc").value.trim() || "بدون وصف";
 
       if (!title || !poster) {
@@ -444,6 +520,7 @@
           type,
           description: desc,
           poster,
+          // تخزين الرابط النصي فقط
           episodes: [{ title: "الفيلم كامل", video }],
           createdAt: serverTimestamp()
         });
@@ -458,6 +535,7 @@
 
     window.renderAddEpisodeForm = (fid) => {
       let item = getItemByFirebaseId(fid);
+      if (!item) return;
       window.selectEpisodeMode = false;
       historyStack.push({ type: "page", page: "add" });
       main.innerHTML = `
@@ -497,13 +575,13 @@
           <img src="${url}">`;
       }
 
-      // استخدام URL الكائن المحلي بدون Base64 لتفادي انهيار الذاكرة مع الملفات الكبيرة
       window.tempVideoData = url;
     };
 
     window.addEpisode = async (fid) => {
       let t = document.getElementById("epTitle").value.trim(),
-          l = document.getElementById("epVideoLink").value.trim() || window.tempVideoData;
+          videoInput = document.getElementById("epVideoLink").value.trim(),
+          l = videoInput || window.tempVideoData;
       if (!t || !l) {
         alert("عمر البيانات");
         return;
