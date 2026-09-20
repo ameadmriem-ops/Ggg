@@ -223,7 +223,7 @@ class MainActivity : ComponentActivity() {
          */
         @JavascriptInterface
         fun showRewarded(adUnitId: String? = null) {
-            Log.d(TAG, "JS Bridge showRewarded invoked with adUnitId: $adUnitId")
+            Log.d(TAG, "JS Bridge showRewarded invoked")
             runOnUiThread {
                 adMobManager.showRewardedAd(
                     activity = this@MainActivity,
@@ -242,9 +242,9 @@ class MainActivity : ComponentActivity() {
          */
         @JavascriptInterface
         fun loadRewarded(adUnitId: String? = null) {
-            Log.d(TAG, "JS Bridge loadRewarded invoked with adUnitId: $adUnitId")
+            Log.d(TAG, "JS Bridge loadRewarded invoked")
             runOnUiThread {
-                adMobManager.loadRewardedAd(adUnitId)
+                adMobManager.loadRewardedAd()
             }
         }
 

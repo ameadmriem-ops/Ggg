@@ -8,11 +8,13 @@ import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.FullScreenContentCallback
 import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.MobileAds
+import com.google.android.gms.ads.OnUserEarnedRewardListener
 import com.google.android.gms.ads.rewarded.RewardedAd
 import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
 
 /**
  * Manages Google AdMob initialization and Rewarded Video Ads lifecycle.
+ * In Release production, ONLY the real user Ad Unit ID is used (injected via BuildConfig).
  */
 class AdMobRewardedManager(private val context: Context) {
 
@@ -22,11 +24,11 @@ class AdMobRewardedManager(private val context: Context) {
         // Official Google AdMob App ID
         const val ADMOB_APP_ID = "ca-app-pub-8410578267301371~7948926096"
 
-        // Real Rewarded Ad Unit ID provided by user
-        const val REAL_REWARDED_AD_UNIT_ID = "ca-app-pub-8410578267301371/4181816334"
-
-        // Official Google test ad unit ID for Rewarded Ads (prevents account suspension in debug/development)
-        const val TEST_REWARDED_AD_UNIT_ID = "ca-app-pub-3940256099942544/5224354917"
+        // Production Ad Unit ID: ca-app-pub-8410578267301371/4181816334
+        // BuildConfig.REWARDED_AD_UNIT_ID is set per build type:
+        // - release: "ca-app-pub-8410578267301371/4181816334" exclusively
+        // - debug: "ca-app-pub-3940256099942544/5224354917"
+        val AD_UNIT_ID: String = BuildConfig.REWARDED_AD_UNIT_ID
     }
 
     private var rewardedAd: RewardedAd? = null
@@ -35,23 +37,6 @@ class AdMobRewardedManager(private val context: Context) {
     private var pendingActivity: Activity? = null
     private var pendingOnReward: (() -> Unit)? = null
     private var pendingOnFail: (() -> Unit)? = null
-
-    /**
-     * Resolves the appropriate Ad Unit ID.
-     * Uses Google's test ad unit ID in debug mode to comply with AdMob policies during testing,
-     * and the real user Ad Unit ID in release mode.
-     */
-    fun resolveAdUnitId(requestedId: String? = null): String {
-        return if (BuildConfig.DEBUG) {
-            TEST_REWARDED_AD_UNIT_ID
-        } else {
-            if (!requestedId.isNullOrBlank() && requestedId.startsWith("ca-app-pub-")) {
-                requestedId
-            } else {
-                REAL_REWARDED_AD_UNIT_ID
-            }
-        }
-    }
 
     /**
      * Initializes Google Mobile Ads SDK and preloads the first Rewarded Ad.
@@ -68,10 +53,10 @@ class AdMobRewardedManager(private val context: Context) {
     fun isAdLoaded(): Boolean = rewardedAd != null
 
     /**
-     * Loads a Rewarded Ad from Google AdMob.
+     * Loads a Rewarded Ad from Google AdMob using RewardedAd.load and RewardedAdLoadCallback.
+     * Uses strictly the configured AD_UNIT_ID.
      */
     fun loadRewardedAd(
-        adUnitId: String? = null,
         onLoaded: (() -> Unit)? = null,
         onFailed: ((String) -> Unit)? = null
     ) {
@@ -86,7 +71,7 @@ class AdMobRewardedManager(private val context: Context) {
         }
 
         isLoading = true
-        val unitId = resolveAdUnitId(adUnitId)
+        val unitId = AD_UNIT_ID
         val adRequest = AdRequest.Builder().build()
 
         Log.d(TAG, "Invoking RewardedAd.load with unit ID: $unitId")
@@ -138,7 +123,7 @@ class AdMobRewardedManager(private val context: Context) {
     }
 
     /**
-     * Shows the Rewarded Ad if available, or attempts an immediate load.
+     * Shows the Rewarded Ad with OnUserEarnedRewardListener.
      * Invokes callbacks for closed ad or failure so playback never freezes.
      */
     fun showRewardedAd(
@@ -188,8 +173,10 @@ class AdMobRewardedManager(private val context: Context) {
             }
         }
 
-        currentAd.show(activity) { rewardItem ->
+        val rewardListener = OnUserEarnedRewardListener { rewardItem ->
             Log.d(TAG, "User earned reward: ${rewardItem.amount} ${rewardItem.type}")
         }
+
+        currentAd.show(activity, rewardListener)
     }
 }
