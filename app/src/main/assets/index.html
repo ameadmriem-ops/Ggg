@@ -176,13 +176,24 @@
     window.onRewardedAdClosed = () => { playRealVideo(localStorage.getItem("last_fid"), localStorage.getItem("last_idx")); };
     window.onAdFailed = () => { playRealVideo(localStorage.getItem("last_fid"), localStorage.getItem("last_idx")); };
 
+    // فحص نوع الرابط أو مصدر الفيديو
+    window.getVideoSourceType = (str) => {
+      if (!str) return "empty";
+      let s = str.trim();
+      if (/^https?:\/\//i.test(s)) return "direct_url";
+      if (/^blob:/i.test(s)) return "local_blob";
+      if (/^data:video\//i.test(s)) return "local_data";
+      return "invalid";
+    };
+
     window.playRealVideo = (fid, idx) => {
       let item = getItemByFirebaseId(fid);
       if (!item) return;
       let ep = item.episodes[idx];
       let rawVideoUrl = (ep.video || "").trim();
+      let sourceType = getVideoSourceType(rawVideoUrl);
 
-      if (!rawVideoUrl) {
+      if (!rawVideoUrl || sourceType === "empty") {
         main.innerHTML = `<button class="back-btn" onclick="openDetails('${item.firebaseId}')">← رجوع</button><div style="padding:12px"><h2>${ep.title}</h2><div style="padding:40px;text-align:center;color:#888">لا يوجد رابط فيديو متوفر</div></div>`;
         return;
       }
@@ -192,44 +203,53 @@
         <div style="padding:12px">
           <h2>${ep.title}</h2>
           <div class="video-player-container">
-            <video id="playerVideo" controls autoplay playsinline preload="metadata" src="${rawVideoUrl}" style="width:100%;max-height:70vh;background:#000;display:block"></video>
+            <video id="videoPlayer" style="width:100%;max-height:70vh;background:#000;display:block"></video>
           </div>
           <div id="videoErrorBanner" class="video-error-banner"></div>
         </div>`;
 
-      let videoEl = document.getElementById("playerVideo");
-      let errBanner = document.getElementById("videoErrorBanner");
+      const video = document.getElementById("videoPlayer");
+      const errBanner = document.getElementById("videoErrorBanner");
 
-      if (videoEl) {
-        videoEl.onerror = () => {
-          let err = videoEl.error;
-          let msg = "تعذر تشغيل الفيديو من الرابط المباشر.";
-          if (err) {
-            switch (err.code) {
-              case 1:
-                msg = "تم إيقاف تحميل الفيديو بواسطة المستخدم.";
-                break;
-              case 2:
-                msg = "فشل في الاتصال بالشبكة أثناء تحميل الفيديو.";
-                break;
-              case 3:
-                msg = "خطأ في فك ترميز الفيديو (تأكد أن صيغة الفيديو مدعومة).";
-                break;
-              case 4:
-                msg = "تعذر تشغيل الفيديو: إما أن الرابط غير صالح أو خادم الملف يمنع الوصول المباشر أو لا يدعم النطاقات (Range Requests).";
-                break;
-            }
-          }
+      if (sourceType === "invalid") {
+        if (errBanner) {
+          errBanner.style.display = "block";
+          errBanner.innerHTML = `
+            <b>⚠️ خطأ في الرابط:</b><br>
+            تعذر تشغيل الفيديو. تأكد أن الرابط مباشر ويدعم تشغيل الفيديو عبر المتصفح.
+            <div style="margin-top:8px;font-size:12px;color:#aaa;direction:ltr;text-align:left;word-break:break-all">
+              ${rawVideoUrl}
+            </div>`;
+        }
+        return;
+      }
+
+      if (video) {
+        video.onerror = () => {
           if (errBanner) {
             errBanner.style.display = "block";
             errBanner.innerHTML = `
               <b>⚠️ تنبيه في التشغيل:</b><br>
-              ${msg}<br>
+              تعذر تشغيل الفيديو. تأكد أن الرابط مباشر ويدعم تشغيل الفيديو عبر المتصفح.
               <div style="margin-top:8px;font-size:12px;color:#aaa;direction:ltr;text-align:left;word-break:break-all">
-                URL: ${rawVideoUrl}
+                ${rawVideoUrl}
               </div>`;
           }
         };
+
+        // تعيين الرابط مباشرة دون fetch() ودون تحويل إلى Blob أو Base64
+        video.src = rawVideoUrl;
+        video.controls = true;
+        video.playsInline = true;
+        video.preload = "metadata";
+        video.load();
+        
+        let playPromise = video.play();
+        if (playPromise !== undefined) {
+          playPromise.catch(() => {
+            // تشغيل تلقائي قد يحتاج نقرة المستخدم في بعض الحالات
+          });
+        }
       }
     };
 
@@ -337,15 +357,21 @@
         preview.innerHTML = `
           <div style="color:#0f0;font-size:12px;margin-bottom:6px">✅ تم اختيار الفيديو: ${f.name}</div>
           <video controls playsinline src="${url}"></video>`;
+        // للفيديوهات المحلية: استخدم Object URL لتجنب تحويل الفيديوهات الضخمة إلى Base64 واستهلاك الذاكرة
+        window.tempPosterData = url;
       } else {
         preview.innerHTML = `
           <div style="color:#0f0;font-size:12px;margin-bottom:6px">✅ تم اختيار الصورة: ${f.name}</div>
           <img src="${url}">`;
+        // للصور: قراءة معقولة الحجم كـ Base64
+        if (f.size <= 2 * 1024 * 1024) {
+          let r = new FileReader();
+          r.onload = e => { window.tempPosterData = e.target.result; };
+          r.readAsDataURL(f);
+        } else {
+          window.tempPosterData = url;
+        }
       }
-
-      let r = new FileReader();
-      r.onload = e => { window.tempPosterData = e.target.result; };
-      r.readAsDataURL(f);
     };
 
     window.handleVideoFile = (f) => {
@@ -365,9 +391,14 @@
           <img src="${url}">`;
       }
 
-      let r = new FileReader();
-      r.onload = e => { window.tempVideoData = e.target.result; };
-      r.readAsDataURL(f);
+      // لا نحول الفيديو إلى Base64 نهائياً لتفادي استهلاك الذاكرة وحجم المستند في Firestore
+      // بل نستخدم Blob URL المحلي مباشرة للملفات المحلية
+      if (f.size > 2 * 1024 * 1024) {
+        window.tempVideoData = url;
+      } else {
+        // إذا كان ملفاً صغيراً جداً، يمكن استخدام URL أو FileReader
+        window.tempVideoData = url;
+      }
     };
 
     window.lockAddPage = () => {
@@ -416,6 +447,8 @@
           episodes: [{ title: "الفيلم كامل", video }],
           createdAt: serverTimestamp()
         });
+        window.tempPosterData = "";
+        window.tempVideoData = "";
         setTimeout(() => showPage("home"), 600);
       } catch (e) {
         alert(e.message);
@@ -464,9 +497,8 @@
           <img src="${url}">`;
       }
 
-      let r = new FileReader();
-      r.onload = e => { window.tempVideoData = e.target.result; };
-      r.readAsDataURL(f);
+      // استخدام URL الكائن المحلي بدون Base64 لتفادي انهيار الذاكرة مع الملفات الكبيرة
+      window.tempVideoData = url;
     };
 
     window.addEpisode = async (fid) => {
