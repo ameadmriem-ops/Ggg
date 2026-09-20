@@ -1,0 +1,6 @@
+{
+  "name": "My Movies",
+  "description": "تطبيق My Movies لمشاهدة الأفلام والمسلسلات مع دمج حقيقي لإعلانات Google AdMob Rewarded",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

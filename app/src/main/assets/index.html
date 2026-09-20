@@ -1,0 +1,92 @@
+<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>My Movies</title><style>*{box-sizing:border-box;margin:0;padding:0}body{background:#000;color:#fff;font-family:Arial}#app{max-width:600px;margin:auto;padding-bottom:80px}.top-bar{height:55px;display:flex;justify-content:space-between;align-items:center;padding:0 16px;background:#000;position:fixed;top:0;left:50%;transform:translateX(-50%);width:100%;max-width:600px;z-index:50;border-bottom:1px solid #111}.logo{font-size:24px;font-weight:900}.logo b{color:#e50914}.logo span{color:#fff}.hero{margin-top:55px;height:200px;background:linear-gradient(to bottom,rgba(0,0,0,.2),#000),url('https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=600&q=80') center/cover;display:flex;justify-content:center;align-items:center}.hero h1{font-size:38px;font-weight:900}.movies-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:14px 10px}.movie-card{text-align:center;position:relative}.poster{width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:14px;background:#111;display:block}.favorite-btn{position:absolute;top:8px;left:8px;width:30px;height:30px;border-radius:50%;border:none;background:rgba(0,0,0,.6);color:#fff}.favorite-btn.active{color:#e50914}.movie-card h3{font-size:15px;font-weight:800;margin-top:8px;min-height:36px;line-height:18px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.movie-card p{font-size:12px;color:#777;margin-top:4px}.bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:600px;height:78px;background:#080808;border-top:1px solid #1a1a1a;display:flex;justify-content:space-around;align-items:center}.bottom-nav button{background:none;border:none;color:#555;display:flex;flex-direction:column;align-items:center;gap:5px;font-size:22px;padding:6px 12px;border-radius:10px;border:2px solid transparent}.bottom-nav button span{font-size:11px}.bottom-nav button.active{color:#e50914;border-color:#e50914}.input{width:100%;background:#151515;color:#fff;border:1px solid #333;border-radius:10px;padding:12px}.back-btn{margin:12px;background:#1a1a1a;border:1px solid #333;color:#fff;padding:8px 14px;border-radius:20px}.episode-btn{width:100%;background:#151515;color:#fff;border:1px solid #2a2a2a;border-radius:10px;padding:14px;display:flex;justify-content:space-between}.drop-zone{border:2px dashed #333;border-radius:10px;padding:14px;text-align:center;color:#777;background:#0f0f0f}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style><script type="importmap">{"imports":{"firebase/app":"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js","firebase/firestore":"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"}}</script></head><body><div id="app"><header class="top-bar"><button onclick="openSearch()" style="background:none;border:none;font-size:22px">🔍</button><div class="logo"><b>MY</b><span>MOVIES</span></div></header><main id="main-content"><div style="padding:60px;text-align:center;color:#555">⏳ تحميل...</div></main><nav class="bottom-nav"><button onclick="showPage('home')" id="nav-home" class="active">⌂<span>الرئيسية</span></button><button onclick="showPage('movies')" id="nav-movies">🎬<span>أفلام</span></button><button onclick="showPage('series')" id="nav-series">📺<span>مسلسل</span></button><button onclick="showPage('anime')" id="nav-anime">⚡<span>أنمي</span></button><button onclick="renderAddPage()" id="nav-add">＋<span>إضافة</span></button><button onclick="showPage('favorites')" id="nav-favorites">♥<span>مفضلتي</span></button></nav></div><script type="module">
+import{initializeApp}from"firebase/app";import{getFirestore,collection,onSnapshot,addDoc,updateDoc,deleteDoc,doc,serverTimestamp,query,orderBy,limit}from"firebase/firestore";
+const firebaseConfig={apiKey:"AIzaSyB_9ZOotR4uZtYYn08OSIZXJczM-WC0MM8",authDomain:"hamza-4b70c.firebaseapp.com",projectId:"hamza-4b70c",storageBucket:"hamza-4b70c.firebasestorage.app",messagingSenderId:"595903053058",appId:"1:595903053058:web:3745c8d9876284a4d4561b"};
+const app=initializeApp(firebaseConfig);const db=getFirestore(app);const colRef=collection(db,"movies");
+const REWARDED_ID="ca-app-pub-8410578267301371/4181816334";
+window.isAdminUnlocked=false;window.deleteMode=false;window.selectEpisodeMode=false;window.allContent=[];window.currentPage="home";window.historyStack=[];window.favorites=JSON.parse(localStorage.getItem("favorites")||"[]");window.main=document.getElementById("main-content");window.tempVideoData="";window.tempPosterData="";
+const q=query(colRef,orderBy("createdAt","desc"),limit(50));
+onSnapshot(q,(s)=>{window.allContent=s.docs.map(d=>({firebaseId:d.id,...d.data()}));renderCurrentPage();});
+window.getItemByFirebaseId=(fid)=>window.allContent.find(i=>i.firebaseId===fid);
+window.isFavorite=(id)=>window.favorites.includes(id);
+window.toggleFavorite=(id)=>{if(window.isFavorite(id))window.favorites=window.favorites.filter(x=>x!==id);else window.favorites.push(id);localStorage.setItem("favorites",JSON.stringify(window.favorites));renderCurrentPage();};
+window.setActiveNav=(p)=>{document.querySelectorAll(".bottom-nav button").forEach(b=>b.classList.remove("active"));let n=document.getElementById("nav-"+p);if(n)n.classList.add("active");};
+window.getTypeLabel=(t)=> t==="movie"?"فيلم":t==="series"?"مسلسل":"أنمي";
+window.createCard=(item)=>{
+  let fav=window.isFavorite(item.id);
+  let click=window.selectEpisodeMode?`renderAddEpisodeForm('${item.firebaseId}')`:window.deleteMode?`askDeleteMovie('${item.firebaseId}')`:`openDetails('${item.firebaseId}')`;
+  let del=window.deleteMode?`<button style="position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;border:none;background:#e50914;color:#fff;z-index:3" onclick="event.stopPropagation();askDeleteMovie('${item.firebaseId}')">✕</button>`:"";
+  return `<div class="movie-card"><button class="favorite-btn ${fav?"active":""}" onclick="event.stopPropagation();toggleFavorite('${item.id}')">♥</button>${del}<div onclick="${click}"><img class="poster" src="${item.poster}" loading="lazy"><h3>${item.title}</h3><p>${item.year} • ${getTypeLabel(item.type)}</p></div></div>`;
+};
+window.renderHome=()=>{main.innerHTML=`<div class="hero"><h1>MY MOVIES</h1></div><div class="movies-grid">${window.allContent.map(createCard).join("")}</div>`;setActiveNav("home");};
+window.renderCategory=(type)=>{
+  let items=window.allContent.filter(x=>x.type===type);
+  let title=type==="movie"?"أفلام":type==="series"?"مسلسلات":"أنمي";
+  main.innerHTML=`<div class="hero" style="height:100px"><h1 style="font-size:26px">${title}</h1></div><div class="movies-grid">${items.length?items.map(createCard).join(""):`<p style="grid-column:1/4;padding:30px;text-align:center;color:#555">لا يوجد ${title} بعد</p>`}</div>`;
+  setActiveNav(type==="movie"?"movies":type);
+};
+window.openDetails=(fid)=>{
+  let item=getItemByFirebaseId(fid);
+  historyStack.push({type:"page",page:currentPage});
+  currentPage="details";
+  let addEpBtn=isAdminUnlocked?`<button class="episode-btn" style="border:1px dashed #444;color:#aaa" onclick="renderAddEpisodeForm('${item.firebaseId}')">➕ إضافة حلقة</button>`:"";
+  main.innerHTML=`<button class="back-btn" onclick="goBack()">← رجوع</button><div style="padding:15px;text-align:center"><img src="${item.poster}" style="width:180px;aspect-ratio:2/3;object-fit:cover;border-radius:12px"><h1 style="margin-top:12px">${item.title}</h1><p style="color:#888">${item.year} • ${getTypeLabel(item.type)}</p><p style="color:#aaa;margin-top:10px">${item.description}</p></div><div style="padding:12px;display:flex;flex-direction:column;gap:8px">${item.episodes.map((ep,idx)=>`<button class="episode-btn" onclick="watchEpisode('${item.firebaseId}',${idx})"><b>${ep.title}</b><span>▶</span></button>`).join("")}${addEpBtn}</div>`;
+};
+
+// ====== نظام الإعلان الحقيقي فقط - 7 ثواني ======
+window.watchEpisode=(fid,idx)=>{
+  historyStack.push({type:"details",id:fid});
+  localStorage.setItem("last_fid",fid);
+  localStorage.setItem("last_idx",idx);
+  main.innerHTML=`
+    <div style="background:#000;height:70vh;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:20px;text-align:center">
+      <div style="width:60px;height:60px;border:4px solid #1a1a1a;border-top-color:#e50914;border-radius:50%;animation:spin 1s linear infinite"></div>
+      <h3 id="adStatus" style="margin-top:18px">جاري تحضير الفيديو...</h3>
+      <p id="adTimer" style="color:#e50914;font-size:44px;font-weight:900;margin-top:10px">7</p>
+    </div>`;
+  let c=7;
+  let it=setInterval(()=>{
+    c--;
+    let el=document.getElementById("adTimer");
+    if(el) el.innerText=c;
+    if(c<=0){
+      clearInterval(it);
+      if(window.Android && window.Android.showRewarded){
+        try{ window.Android.showRewarded(REWARDED_ID); }
+        catch(e){ playRealVideo(fid,idx); }
+      }else{
+        // فالمتصفح كيدخل مباشرة للفيلم - فالتطبيق غادي يبان الإعلان الحقيقي
+        playRealVideo(fid,idx);
+      }
+    }
+  },1000);
+};
+window.onRewardedAdClosed=()=>{ playRealVideo(localStorage.getItem("last_fid"), localStorage.getItem("last_idx")); };
+window.onAdFailed=()=>{ playRealVideo(localStorage.getItem("last_fid"), localStorage.getItem("last_idx")); };
+window.playRealVideo=(fid,idx)=>{
+  let item=getItemByFirebaseId(fid);
+  if(!item) return;
+  let ep=item.episodes[idx];
+  let v=ep.video?`<video controls autoplay playsinline preload="metadata" src="${ep.video}" style="width:100%;max-height:70vh;background:#000"></video>`:`<div style="padding:40px;text-align:center;color:#888">لا يوجد فيديو</div>`;
+  main.innerHTML=`<button class="back-btn" onclick="openDetails('${item.firebaseId}')">← رجوع</button><div style="padding:12px"><h2>${ep.title}</h2><div style="margin-top:12px;background:#000;border-radius:10px;overflow:hidden;border:1px solid #222">${v}</div></div>`;
+};
+
+window.openSearch=()=>{historyStack.push({type:"page",page:currentPage});currentPage="search";main.innerHTML=`<button class="back-btn" onclick="goBack()">← رجوع</button><div style="padding:12px"><input id="searchInput" class="input" placeholder="ابحث..." oninput="performSearch()"></div><div id="searchResults" class="movies-grid"></div>`;};
+window.performSearch=()=>{let qq=document.getElementById("searchInput").value.toLowerCase();document.getElementById("searchResults").innerHTML=window.allContent.filter(x=>x.title.toLowerCase().includes(qq)).map(createCard).join("");};
+window.renderFavorites=()=>{let favs=window.allContent.filter(x=>favorites.includes(x.id));main.innerHTML=`<div class="hero" style="height:100px"><h1 style="font-size:26px">مفضلتي ♥</h1></div><div class="movies-grid">${favs.map(createCard).join("")}</div>`;setActiveNav("favorites");};
+window.showPage=(p,s=true)=>{if(s&&currentPage!==p)historyStack.push({type:"page",page:currentPage});currentPage=p;window.selectEpisodeMode=false;if(p==="home")renderHome();else if(["movies","series","anime","movie"].includes(p))renderCategory(p==="movies"?"movie":p);else if(p==="favorites")renderFavorites();window.scrollTo(0,0);};
+window.renderCurrentPage=()=>{if(currentPage==="home")renderHome();else if(["movies","series","anime","movie"].includes(currentPage))renderCategory(currentPage==="movies"?"movie":currentPage);else if(currentPage==="favorites")renderFavorites();else if(currentPage==="add")renderAddPage();};
+window.goBack=()=>{if(!historyStack.length){showPage("home",false);return}let l=historyStack.pop();if(l.type==="page")showPage(l.page,false);else openDetails(l.id);};
+window.renderAddPage=()=>{setActiveNav("add");currentPage="add";if(!isAdminUnlocked){main.innerHTML=`<h1 style="padding:20px">محمي 🔒</h1><div style="padding:20px;max-width:340px;margin:auto;display:flex;flex-direction:column;gap:14px"><input id="adminCode" class="input" type="password" placeholder="أدخل رمز هنا.."><button onclick="if(document.getElementById('adminCode').value==='1234'){isAdminUnlocked=true;renderAddPage()}else{alert('غالط')}" style="background:#e50914;color:#fff;border:none;padding:13px;border-radius:10px">فتح</button></div>`;return;}main.innerHTML=`<h1 style="padding:16px">لوحة التحكم</h1><div style="padding:12px;display:flex;flex-direction:column;gap:10px"><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button onclick="startSelectEpisodeMode()" style="background:#fff;color:#000;border:none;padding:12px;border-radius:10px;font-weight:bold">📺 إضافة حلقة</button><button onclick="toggleDeleteMode()" style="background:${deleteMode?'#fff':'#e50914'};color:${deleteMode?'#000':'#fff'};border:none;padding:12px;border-radius:10px;font-weight:bold">${deleteMode?'إلغاء':'🗑️ حذف'}</button></div><button onclick="lockAddPage()" style="background:#1a1a1a;color:#888;border:1px solid #333;padding:9px;border-radius:8px">🔒 قفل</button><hr style="border-color:#1f1f1f"><select id="addType" class="input"><option value="movie">فيلم</option><option value="series">مسلسل</option><option value="anime">أنمي</option></select><input id="addTitle" class="input" placeholder="العنوان"><input id="addYear" class="input" type="number" placeholder="السنة"><input id="addPoster" class="input" placeholder="رابط الصورة"><div class="drop-zone" onclick="document.getElementById('posterFile').click()">📷 اختر صورة<input type="file" id="posterFile" accept="image/*" hidden onchange="handlePosterFile(this.files[0])"><div id="posterPreview" style="margin-top:8px;color:#fff;font-size:12px"></div></div><input id="addVideo" class="input" placeholder="رابط الفيديو"><div class="drop-zone" onclick="document.getElementById('videoFile').click()">🎬 اختر فيديو<input type="file" id="videoFile" accept="video/*" hidden onchange="handleVideoFile(this.files[0])"><div id="videoPreview" style="margin-top:8px;color:#fff;font-size:12px"></div></div><input id="addDesc" class="input" placeholder="الوصف"><button id="addBtn" onclick="addNewContent()" style="background:#e50914;color:#fff;border:none;padding:13px;border-radius:10px;font-weight:bold">إضافة</button></div>`;};
+window.handlePosterFile=(f)=>{if(!f)return;let r=new FileReader();r.onload=e=>{window.tempPosterData=e.target.result;document.getElementById("posterPreview").innerText="✅ "+f.name;};r.readAsDataURL(f);};
+window.handleVideoFile=(f)=>{if(!f)return;let r=new FileReader();r.onload=e=>{window.tempVideoData=e.target.result;document.getElementById("videoPreview").innerText="✅ "+f.name;};r.readAsDataURL(f);};
+window.lockAddPage=()=>{isAdminUnlocked=false;deleteMode=false;showPage("home");};
+window.toggleDeleteMode=()=>{deleteMode=!deleteMode;selectEpisodeMode=false;renderAddPage();showPage("movies",false);};
+window.startSelectEpisodeMode=()=>{selectEpisodeMode=true;deleteMode=false;main.innerHTML=`<h1 style="padding:16px">اختر فيلم</h1><div class="movies-grid">${window.allContent.map(createCard).join("")}</div>`;};
+window.addNewContent=async()=>{let type=document.getElementById("addType").value,title=document.getElementById("addTitle").value.trim(),year=document.getElementById("addYear").value||2024,poster=document.getElementById("addPoster").value.trim()||window.tempPosterData,video=document.getElementById("addVideo").value.trim()||window.tempVideoData,desc=document.getElementById("addDesc").value.trim()||"بدون وصف";if(!title||!poster){alert("العنوان والصورة ضروري");return;}let btn=document.getElementById("addBtn");btn.disabled=true;btn.innerText="⏳ جاري...";try{await addDoc(colRef,{id:type+"-"+Date.now(),title,year:parseInt(year),type,description:desc,poster,episodes:[{title:"الفيلم كامل",video}],createdAt:serverTimestamp()});setTimeout(()=>showPage("home"),600);}catch(e){alert(e.message);btn.disabled=false;}};
+window.renderAddEpisodeForm=(fid)=>{let item=getItemByFirebaseId(fid);window.selectEpisodeMode=false;historyStack.push({type:"page",page:"add"});main.innerHTML=`<button class="back-btn" onclick="renderAddPage()">← رجوع</button><div style="padding:15px;text-align:center"><img src="${item.poster}" style="width:100px;aspect-ratio:2/3;object-fit:cover;border-radius:8px"><h2>${item.title}</h2></div><div style="padding:12px;display:flex;flex-direction:column;gap:10px;background:#111;margin:8px;border-radius:10px;border:1px solid #222"><input id="epTitle" class="input" placeholder="عنوان الحلقة"><input id="epVideoLink" class="input" placeholder="رابط الفيديو"><div class="drop-zone" onclick="document.getElementById('epVideoFile').click()">🎬 اختر فيديو<input type="file" id="epVideoFile" accept="video/*" hidden onchange="handleEpVideoFile(this.files[0])"><div id="epVideoPreview" style="margin-top:8px;color:#fff;font-size:12px"></div></div><button onclick="addEpisode('${item.firebaseId}')" style="background:#fff;color:#000;border:none;padding:12px;border-radius:8px;font-weight:bold">✅ إضافة</button></div>`;};
+window.handleEpVideoFile=(f)=>{if(!f)return;let r=new FileReader();r.onload=e=>{window.tempVideoData=e.target.result;document.getElementById("epVideoPreview").innerText="✅ "+f.name;};r.readAsDataURL(f);};
+window.addEpisode=async(fid)=>{let t=document.getElementById("epTitle").value.trim(),l=document.getElementById("epVideoLink").value.trim()||window.tempVideoData;if(!t||!l){alert("عمر البيانات");return;}let item=getItemByFirebaseId(fid);let ne=[...item.episodes,{title:t,video:l}];await updateDoc(doc(db,"movies",fid),{episodes:ne});window.tempVideoData="";alert("✅ تمت");openDetails(fid);};
+window.askDeleteMovie=async(fid)=>{if(confirm("حذف نهائي؟")){await deleteDoc(doc(db,"movies",fid));renderCurrentPage();}};
+</script></body></html>
