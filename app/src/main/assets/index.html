@@ -31,6 +31,13 @@
     .media-preview-box{margin-top:10px;text-align:center;display:none}
     .media-preview-box img{max-width:140px;aspect-ratio:2/3;object-fit:cover;border-radius:8px;border:1px solid #333;display:inline-block}
     .media-preview-box video{width:100%;max-height:220px;border-radius:8px;background:#000;border:1px solid #333;display:inline-block}
+    .upload-status-box{margin-top:10px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.5;display:none;text-align:right}
+    .upload-status-box.selecting{display:block;background:#111;border:1px solid #333;color:#bbb}
+    .upload-status-box.uploading{display:block;background:#1a1505;border:1px solid #d4a017;color:#ffd700}
+    .upload-status-box.success{display:block;background:#051a08;border:1px solid #28a745;color:#4ade80}
+    .upload-status-box.error{display:block;background:#1a0505;border:1px solid #e50914;color:#ff8888}
+    .progress-bar-bg{width:100%;height:6px;background:#222;border-radius:3px;margin-top:8px;overflow:hidden}
+    .progress-bar-fill{height:100%;width:0%;background:#e50914;transition:width .2s ease}
     .video-player-container{margin-top:12px;background:#000;border-radius:10px;overflow:hidden;border:1px solid #222;position:relative;min-height:220px;display:flex;align-items:center;justify-content:center}
     .video-error-banner{display:none;background:#1a0505;border:1px solid #e50914;color:#ff8888;padding:16px;border-radius:8px;margin-top:12px;text-align:right;font-size:14px;line-height:1.6}
     .video-error-banner b{color:#fff}
@@ -40,7 +47,8 @@
   {
     "imports": {
       "firebase/app": "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js",
-      "firebase/firestore": "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
+      "firebase/firestore": "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js",
+      "firebase/storage": "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js"
     }
   }
   </script>
@@ -67,6 +75,7 @@
   <script type="module">
     import { initializeApp } from "firebase/app";
     import { getFirestore, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, query, orderBy, limit } from "firebase/firestore";
+    import { getStorage, ref as sRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
     const firebaseConfig = {
       apiKey: "AIzaSyB_9ZOotR4uZtYYn08OSIZXJczM-WC0MM8",
@@ -80,6 +89,12 @@
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
     const colRef = collection(db, "movies");
+    let storageInstance = null;
+    try {
+      storageInstance = getStorage(app);
+    } catch (e) {
+      console.warn("Storage init notice:", e);
+    }
 
     const REWARDED_ID = "ca-app-pub-8410578267301371/4181816334";
 
@@ -91,8 +106,15 @@
     window.historyStack = [];
     window.favorites = JSON.parse(localStorage.getItem("favorites") || "[]");
     window.main = document.getElementById("main-content");
-    window.tempVideoData = "";
-    window.tempPosterData = "";
+    
+    // متغيرات حفظ الملفات المرفوعة وروابطها العامة
+    window.selectedVideoFile = null;
+    window.uploadedVideoPublicUrl = "";
+    window.selectedPosterFile = null;
+    window.uploadedPosterPublicUrl = "";
+
+    window.selectedEpVideoFile = null;
+    window.uploadedEpVideoPublicUrl = "";
 
     const q = query(colRef, orderBy("createdAt", "desc"), limit(50));
     onSnapshot(q, (s) => {
@@ -192,6 +214,7 @@
       let s = str.trim();
       if (/^https?:\/\//i.test(s)) return "direct_url";
       if (/^blob:/i.test(s)) return "local_blob";
+      if (/^content:\/\//i.test(s) || /^file:\/\//i.test(s)) return "local_device";
       if (/^data:video\//i.test(s)) return "local_data";
       return "invalid";
     };
@@ -256,20 +279,35 @@
         return;
       }
 
+      if (sourceType === "local_device" || sourceType === "local_blob") {
+        showVideoError("الفيديو مسجل كملف محلي من هاتف المرسل ولا يمكن تشغيله على هذا الجهاز. يرجى رفع الفيديو أو استخدام رابط عام مباشر.");
+        return;
+      }
+
       if (sourceType === "invalid") {
-        showVideoError("تعذر تشغيل الفيديو. تأكد أن الرابط مباشر ويدعم تشغيل الفيديو عبر المتصفح.");
+        showVideoError("الرابط غير صالح أو صيغة الفيديو غير مدعومة. تأكد أن الرابط مباشر ويبدأ بـ https://");
         return;
       }
 
       if (video) {
-        // معالجة الأحداث:
-        // 1. loadedmetadata
+        // فحص مسبق لصلاحية الرابط ودعمه للـ Range Requests
+        fetch(savedVideoUrl, { method: "HEAD" })
+          .then(resp => {
+            if (resp.status === 404) {
+              showVideoError("الفيديو غير موجود على السيرفر (404 Not Found).");
+            } else if (resp.status >= 400) {
+              showVideoError("السيرفر أرجع خطأ في الاتصال (كود " + resp.status + ").");
+            }
+          })
+          .catch(() => {
+            // يتم تجاهل أخطاء CORS في الـ HEAD request والمتابعة مع مشغل الفيديو
+          });
+
         video.addEventListener("loadedmetadata", () => {
           if (spinner) spinner.style.display = "none";
           if (errBanner) errBanner.style.display = "none";
         });
 
-        // 2. waiting
         video.addEventListener("waiting", () => {
           if (spinner) {
             spinner.style.display = "block";
@@ -277,11 +315,10 @@
           }
         });
 
-        // 3. stalled
         video.addEventListener("stalled", () => {
           if (spinner) {
             spinner.style.display = "block";
-            if (spinnerText) spinnerText.innerText = "توقف التحميل مؤقتاً، بانتظار استجابة الخادم...";
+            if (spinnerText) spinnerText.innerText = "توقف البث مؤقتاً، بانتظار استجابة السيرفر...";
           }
         });
 
@@ -294,7 +331,6 @@
           if (errBanner) errBanner.style.display = "none";
         });
 
-        // 4. error
         video.addEventListener("error", () => {
           if (spinner) spinner.style.display = "none";
           let err = video.error;
@@ -305,20 +341,19 @@
                 reason = "تم إلغاء تحميل الفيديو من قبل المتصفح.";
                 break;
               case 2:
-                reason = "خطأ في الشبكة أثناء جلب الفيديو. تأكد من اتصال الإنترنت وصلاحية الرابط.";
+                reason = "خطأ في الشبكة أو انتهاء مهلة الاتصال أثناء جلب الفيديو. تأكد من اتصالك بالإنترنت.";
                 break;
               case 3:
-                reason = "فشل فك تشفير الفيديو (تأكد أن صيغة الفيديو مدعومة مثل MP4 أو WebM).";
+                reason = "صيغة الفيديو غير مدعومة أو فشل فك التشفير (تأكد أن الصيغة MP4 / WebM).";
                 break;
               case 4:
-                reason = "تعذر تشغيل الفيديو. تأكد أن الرابط مباشر ويدعم تشغيل الفيديو عبر المتصفح.";
+                reason = "الفيديو غير موجود أو السيرفر لا يدعم البث المباشر / Range Requests.";
                 break;
             }
           }
           showVideoError(reason);
         });
 
-        // تطبيق المطلوب نصاً:
         video.src = savedVideoUrl;
         video.preload = "metadata";
         video.controls = true;
@@ -327,7 +362,7 @@
         let playPromise = video.play();
         if (playPromise !== undefined) {
           playPromise.catch((e) => {
-            console.log("Play interrupted or requires user action:", e);
+            console.log("Play interrupted or requires user gesture:", e);
           });
         }
       }
@@ -374,6 +409,97 @@
       else openDetails(l.id);
     };
 
+    // ==========================================
+    // دالة رفع الملفات إلى السيرفر العام
+    // تدعم Firebase Storage، وتتحول تلقائياً إلى Litterbox Catbox (حتى 1 جيجابايت مع Streaming & Range Requests)
+    // ==========================================
+    window.uploadMediaFile = (file, folder, onProgress) => {
+      return new Promise((resolve, reject) => {
+        if (!file) {
+          reject(new Error("لم يتم تحديد أي ملف"));
+          return;
+        }
+
+        const fileName = Date.now() + "_" + file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+
+        // 1. المحاولة أولاً عبر Firebase Storage
+        if (storageInstance) {
+          try {
+            const storageReference = sRef(storageInstance, `${folder}/${fileName}`);
+            const uploadTask = uploadBytesResumable(storageReference, file);
+
+            uploadTask.on("state_changed",
+              (snapshot) => {
+                if (snapshot.totalBytes > 0) {
+                  const percent = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+                  if (onProgress) onProgress(percent);
+                }
+              },
+              (error) => {
+                console.warn("Firebase Storage failed, switching to hosting server...", error);
+                uploadViaHostingServer(file, onProgress).then(resolve).catch(reject);
+              },
+              async () => {
+                try {
+                  const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                  resolve(downloadURL);
+                } catch (err) {
+                  uploadViaHostingServer(file, onProgress).then(resolve).catch(reject);
+                }
+              }
+            );
+            return;
+          } catch (e) {
+            console.warn("Firebase init error, using fallback server", e);
+          }
+        }
+
+        // 2. الرفع المباشر إلى سيرفر الاستضافة العام (يدعم Range Requests و Streaming)
+        uploadViaHostingServer(file, onProgress).then(resolve).catch(reject);
+      });
+    };
+
+    function uploadViaHostingServer(file, onProgress) {
+      return new Promise((resolve, reject) => {
+        const formData = new FormData();
+        formData.append("reqtype", "fileupload");
+        formData.append("time", "72h");
+        formData.append("fileToUpload", file);
+
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "https://litterbox.catbox.moe/resources/internals/api.php", true);
+        xhr.timeout = 600000; // 10 دقائق للفيديوهات الكبيرة
+
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && onProgress) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            onProgress(pct);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            const res = xhr.responseText.trim();
+            if (res.startsWith("http://") || res.startsWith("https://")) {
+              resolve(res);
+            } else {
+              reject(new Error(res || "فشل السيرفر في استلام الفيديو"));
+            }
+          } else {
+            reject(new Error("فشل الرفع إلى السيرفر (كود الخطأ: " + xhr.status + ")"));
+          }
+        };
+
+        xhr.onerror = () => reject(new Error("حدث خطأ في الشبكة أثناء رفع الفيديو"));
+        xhr.ontimeout = () => reject(new Error("انتهت مهلة الاتصال أثناء رفع الفيديو. تحقق من سرعة الإنترنت"));
+
+        xhr.send(formData);
+      });
+    }
+
+    // ==========================================
+    // واجهة الإضافة ولوحة التحكم
+    // ==========================================
     window.renderAddPage = () => {
       setActiveNav("add");
       currentPage = "add";
@@ -410,15 +536,17 @@
             📷 إضافة فيديو أو صورة (الملصق)
             <input type="file" id="posterFile" accept="image/*,video/*" style="display:none" onchange="handlePosterFile(this.files[0])">
             <div id="posterPreview" class="media-preview-box"></div>
+            <div id="posterStatus" class="upload-status-box"></div>
           </label>
 
-          <input id="addVideo" class="input" placeholder="رابط الفيديو (مثل: https://pixeldrain.com/api/file/...) أو اختر ملفاً">
+          <input id="addVideo" class="input" placeholder="رابط الفيديو العام المباشر أو اختر من الهاتف لرفعه">
           
-          <!-- خانة اختيار أو إضافة فيديو أو صورة للفيلم -->
+          <!-- خانة اختيار ورفع ملف الفيديو إلى الاستضافة -->
           <label class="drop-zone" for="videoFile">
             🎬 إضافة فيديو أو صورة (ملف الفيديو)
-            <input type="file" id="videoFile" accept="image/*,video/*" style="display:none" onchange="handleVideoFile(this.files[0])">
+            <input type="file" id="videoFile" accept="video/*,image/*" style="display:none" onchange="handleVideoFile(this.files[0])">
             <div id="videoPreview" class="media-preview-box"></div>
+            <div id="videoStatus" class="upload-status-box"></div>
           </label>
 
           <input id="addDesc" class="input" placeholder="الوصف">
@@ -428,50 +556,122 @@
 
     window.handlePosterFile = (f) => {
       if (!f) return;
+      window.selectedPosterFile = f;
+      window.uploadedPosterPublicUrl = "";
+
       let preview = document.getElementById("posterPreview");
+      let status = document.getElementById("posterStatus");
       let isVideo = f.type.startsWith("video/") || /\.(mp4|webm|mkv|mov|avi|3gp)$/i.test(f.name);
-      let url = URL.createObjectURL(f);
+      let localUrl = URL.createObjectURL(f);
 
       preview.style.display = "block";
       if (isVideo) {
-        preview.innerHTML = `
-          <div style="color:#0f0;font-size:12px;margin-bottom:6px">✅ تم اختيار الفيديو: ${f.name}</div>
-          <video controls playsinline src="${url}"></video>`;
-        window.tempPosterData = url;
+        preview.innerHTML = `<video playsinline src="${localUrl}"></video>`;
       } else {
-        preview.innerHTML = `
-          <div style="color:#0f0;font-size:12px;margin-bottom:6px">✅ تم اختيار الصورة: ${f.name}</div>
-          <img src="${url}">`;
-        if (f.size <= 2 * 1024 * 1024) {
-          let r = new FileReader();
-          r.onload = e => { window.tempPosterData = e.target.result; };
-          r.readAsDataURL(f);
-        } else {
-          window.tempPosterData = url;
+        preview.innerHTML = `<img src="${localUrl}">`;
+      }
+
+      if (status) {
+        status.className = "upload-status-box selecting";
+        status.innerHTML = `<div>📂 جاري اختيار الصورة: <b>${f.name}</b> (${(f.size / (1024*1024)).toFixed(1)} MB)</div>`;
+      }
+
+      // إذا كانت صورة صغيرة يمكن رفعها أو استخدام Base64، أو رفعها للاستضافة
+      if (!isVideo && f.size <= 1.5 * 1024 * 1024) {
+        let r = new FileReader();
+        r.onload = (e) => {
+          window.uploadedPosterPublicUrl = e.target.result;
+          if (status) {
+            status.className = "upload-status-box success";
+            status.innerHTML = `✅ تم تجهيز الملصق بنجاح`;
+          }
+        };
+        r.readAsDataURL(f);
+      } else {
+        if (status) {
+          status.className = "upload-status-box uploading";
+          status.innerHTML = `
+            <div>⏳ جاري رفع الملصق إلى السيرفر... <span id="posterPct">0%</span></div>
+            <div class="progress-bar-bg"><div id="posterBar" class="progress-bar-fill"></div></div>`;
         }
+
+        window.uploadMediaFile(f, "posters", (pct) => {
+          let pEl = document.getElementById("posterPct");
+          let bEl = document.getElementById("posterBar");
+          if (pEl) pEl.innerText = pct + "%";
+          if (bEl) bEl.style.width = pct + "%";
+        }).then((url) => {
+          window.uploadedPosterPublicUrl = url;
+          document.getElementById("addPoster").value = url;
+          if (status) {
+            status.className = "upload-status-box success";
+            status.innerHTML = `✅ تم رفع الملصق بنجاح إلى السيرفر العام`;
+          }
+        }).catch((err) => {
+          if (status) {
+            status.className = "upload-status-box error";
+            status.innerHTML = `❌ فشل رفع الملصق: ${err.message}`;
+          }
+        });
       }
     };
 
     window.handleVideoFile = (f) => {
       if (!f) return;
+      window.selectedVideoFile = f;
+      window.uploadedVideoPublicUrl = "";
+
       let preview = document.getElementById("videoPreview");
+      let status = document.getElementById("videoStatus");
       let isVideo = f.type.startsWith("video/") || /\.(mp4|webm|mkv|mov|avi|3gp)$/i.test(f.name);
-      let url = URL.createObjectURL(f);
+      let localUrl = URL.createObjectURL(f);
 
       preview.style.display = "block";
       if (isVideo) {
-        preview.innerHTML = `
-          <div style="color:#0f0;font-size:12px;margin-bottom:6px">✅ تم اختيار الفيديو: ${f.name}</div>
-          <video controls playsinline src="${url}"></video>`;
+        preview.innerHTML = `<video playsinline src="${localUrl}"></video>`;
       } else {
-        preview.innerHTML = `
-          <div style="color:#0f0;font-size:12px;margin-bottom:6px">✅ تم اختيار الصورة: ${f.name}</div>
-          <img src="${url}">`;
+        preview.innerHTML = `<img src="${localUrl}">`;
       }
 
-      // لا نقوم بتحويل الفيديو إلى Base64 لتفادي استهلاك الذاكرة وحجم المستند في Firestore
-      // بل نستخدم Blob URL المباشر
-      window.tempVideoData = url;
+      // 1. حالة: جاري اختيار الفيديو
+      if (status) {
+        status.className = "upload-status-box selecting";
+        status.innerHTML = `<div>📂 جاري اختيار الفيديو: <b>${f.name}</b> (${(f.size / (1024*1024)).toFixed(1)} MB)</div>`;
+      }
+
+      // 2. حالة: جاري رفع الفيديو مع شريط التقدم
+      setTimeout(() => {
+        if (status) {
+          status.className = "upload-status-box uploading";
+          status.innerHTML = `
+            <div>🚀 جاري رفع الفيديو إلى السيرفر العام... <span id="videoPct">0%</span></div>
+            <div class="progress-bar-bg"><div id="videoBar" class="progress-bar-fill"></div></div>`;
+        }
+
+        window.uploadMediaFile(f, "videos", (pct) => {
+          let pEl = document.getElementById("videoPct");
+          let bEl = document.getElementById("videoBar");
+          if (pEl) pEl.innerText = pct + "%";
+          if (bEl) bEl.style.width = pct + "%";
+        }).then((publicUrl) => {
+          // 3. حالة: تم الرفع بنجاح
+          window.uploadedVideoPublicUrl = publicUrl;
+          let input = document.getElementById("addVideo");
+          if (input) input.value = publicUrl;
+          if (status) {
+            status.className = "upload-status-box success";
+            status.innerHTML = `
+              <div>✅ تم الرفع بنجاح! الرابط العام جاهز للبث المباشر.</div>
+              <div style="font-size:11px;color:#aaa;direction:ltr;word-break:break-all;margin-top:4px">${publicUrl}</div>`;
+          }
+        }).catch((err) => {
+          // 4. حالة: فشل الرفع مع إظهار سبب الخطأ
+          if (status) {
+            status.className = "upload-status-box error";
+            status.innerHTML = `❌ فشل الرفع: ${err.message}. يمكنك بدلاً من ذلك وضع رابط مباشر في خانة الرابط.`;
+          }
+        });
+      }, 300);
     };
 
     window.lockAddPage = () => {
@@ -498,20 +698,36 @@
           title = document.getElementById("addTitle").value.trim(),
           year = document.getElementById("addYear").value || 2024,
           posterInput = document.getElementById("addPoster").value.trim(),
-          poster = posterInput || window.tempPosterData,
+          poster = posterInput || window.uploadedPosterPublicUrl,
           videoInput = document.getElementById("addVideo").value.trim(),
-          // تخزين رابط الفيديو فقط دون تحويله إلى Base64 أو تنزيله
-          video = videoInput || window.tempVideoData,
+          video = videoInput || window.uploadedVideoPublicUrl,
           desc = document.getElementById("addDesc").value.trim() || "بدون وصف";
 
-      if (!title || !poster) {
-        alert("العنوان والصورة ضروري");
+      if (!title) {
+        alert("العنوان ضروري");
+        return;
+      }
+
+      if (!poster) {
+        alert("يرجى اختيار صورة الملصق أو إدخال رابطها");
+        return;
+      }
+
+      // منع حفظ مسارات الملفات المحلية نهائياً
+      if (video.startsWith("content://") || video.startsWith("file://") || video.startsWith("blob:")) {
+        alert("جاري رفع الفيديو إلى السيرفر... يرجى الانتظار حتى اكتمال الرفع وظهور 'تم الرفع بنجاح'.");
+        return;
+      }
+
+      if (!video) {
+        alert("يرجى إدخال رابط فيديو مباشر أو اختيار ملف وانتظار رفعه");
         return;
       }
 
       let btn = document.getElementById("addBtn");
       btn.disabled = true;
-      btn.innerText = "⏳ جاري...";
+      btn.innerText = "⏳ جاري الحفظ...";
+
       try {
         await addDoc(colRef, {
           id: type + "-" + Date.now(),
@@ -520,16 +736,18 @@
           type,
           description: desc,
           poster,
-          // تخزين الرابط النصي فقط
           episodes: [{ title: "الفيلم كامل", video }],
           createdAt: serverTimestamp()
         });
-        window.tempPosterData = "";
-        window.tempVideoData = "";
+        window.selectedVideoFile = null;
+        window.uploadedVideoPublicUrl = "";
+        window.selectedPosterFile = null;
+        window.uploadedPosterPublicUrl = "";
         setTimeout(() => showPage("home"), 600);
       } catch (e) {
-        alert(e.message);
+        alert("فشل الحفظ: " + e.message);
         btn.disabled = false;
+        btn.innerText = "إضافة";
       }
     };
 
@@ -537,7 +755,10 @@
       let item = getItemByFirebaseId(fid);
       if (!item) return;
       window.selectEpisodeMode = false;
+      window.selectedEpVideoFile = null;
+      window.uploadedEpVideoPublicUrl = "";
       historyStack.push({ type: "page", page: "add" });
+
       main.innerHTML = `
         <button class="back-btn" onclick="renderAddPage()">← رجوع</button>
         <div style="padding:15px;text-align:center">
@@ -546,51 +767,105 @@
         </div>
         <div style="padding:12px;display:flex;flex-direction:column;gap:10px;background:#111;margin:8px;border-radius:10px;border:1px solid #222">
           <input id="epTitle" class="input" placeholder="عنوان الحلقة">
-          <input id="epVideoLink" class="input" placeholder="رابط الفيديو (مثل: https://pixeldrain.com/api/file/...) أو اختر ملفاً">
+          <input id="epVideoLink" class="input" placeholder="رابط الفيديو المباشر أو اختر ملفاً لرفعه">
           
           <label class="drop-zone" for="epVideoFile">
             🎬 إضافة فيديو أو صورة (الحلقة)
-            <input type="file" id="epVideoFile" accept="image/*,video/*" style="display:none" onchange="handleEpVideoFile(this.files[0])">
+            <input type="file" id="epVideoFile" accept="video/*,image/*" style="display:none" onchange="handleEpVideoFile(this.files[0])">
             <div id="epVideoPreview" class="media-preview-box"></div>
+            <div id="epVideoStatus" class="upload-status-box"></div>
           </label>
 
-          <button onclick="addEpisode('${item.firebaseId}')" style="background:#fff;color:#000;border:none;padding:12px;border-radius:8px;font-weight:bold">✅ إضافة</button>
+          <button id="addEpBtn" onclick="addEpisode('${item.firebaseId}')" style="background:#fff;color:#000;border:none;padding:12px;border-radius:8px;font-weight:bold">✅ إضافة</button>
         </div>`;
     };
 
     window.handleEpVideoFile = (f) => {
       if (!f) return;
+      window.selectedEpVideoFile = f;
+      window.uploadedEpVideoPublicUrl = "";
+
       let preview = document.getElementById("epVideoPreview");
+      let status = document.getElementById("epVideoStatus");
       let isVideo = f.type.startsWith("video/") || /\.(mp4|webm|mkv|mov|avi|3gp)$/i.test(f.name);
-      let url = URL.createObjectURL(f);
+      let localUrl = URL.createObjectURL(f);
 
       preview.style.display = "block";
       if (isVideo) {
-        preview.innerHTML = `
-          <div style="color:#0f0;font-size:12px;margin-bottom:6px">✅ تم اختيار الفيديو: ${f.name}</div>
-          <video controls playsinline src="${url}"></video>`;
+        preview.innerHTML = `<video playsinline src="${localUrl}"></video>`;
       } else {
-        preview.innerHTML = `
-          <div style="color:#0f0;font-size:12px;margin-bottom:6px">✅ تم اختيار الصورة: ${f.name}</div>
-          <img src="${url}">`;
+        preview.innerHTML = `<img src="${localUrl}">`;
       }
 
-      window.tempVideoData = url;
+      if (status) {
+        status.className = "upload-status-box selecting";
+        status.innerHTML = `<div>📂 جاري اختيار الفيديو: <b>${f.name}</b> (${(f.size / (1024*1024)).toFixed(1)} MB)</div>`;
+      }
+
+      setTimeout(() => {
+        if (status) {
+          status.className = "upload-status-box uploading";
+          status.innerHTML = `
+            <div>🚀 جاري رفع فيديو الحلقة إلى السيرفر... <span id="epVideoPct">0%</span></div>
+            <div class="progress-bar-bg"><div id="epVideoBar" class="progress-bar-fill"></div></div>`;
+        }
+
+        window.uploadMediaFile(f, "episodes", (pct) => {
+          let pEl = document.getElementById("epVideoPct");
+          let bEl = document.getElementById("epVideoBar");
+          if (pEl) pEl.innerText = pct + "%";
+          if (bEl) bEl.style.width = pct + "%";
+        }).then((publicUrl) => {
+          window.uploadedEpVideoPublicUrl = publicUrl;
+          let input = document.getElementById("epVideoLink");
+          if (input) input.value = publicUrl;
+          if (status) {
+            status.className = "upload-status-box success";
+            status.innerHTML = `
+              <div>✅ تم الرفع بنجاح! الرابط العام جاهز للبث.</div>
+              <div style="font-size:11px;color:#aaa;direction:ltr;word-break:break-all;margin-top:4px">${publicUrl}</div>`;
+          }
+        }).catch((err) => {
+          if (status) {
+            status.className = "upload-status-box error";
+            status.innerHTML = `❌ فشل الرفع: ${err.message}. يمكنك وضع رابط مباشر يدوياً.`;
+          }
+        });
+      }, 300);
     };
 
     window.addEpisode = async (fid) => {
       let t = document.getElementById("epTitle").value.trim(),
           videoInput = document.getElementById("epVideoLink").value.trim(),
-          l = videoInput || window.tempVideoData;
-      if (!t || !l) {
-        alert("عمر البيانات");
+          l = videoInput || window.uploadedEpVideoPublicUrl;
+
+      if (!t) {
+        alert("يرجى إدخال عنوان الحلقة");
         return;
       }
+
+      if (!l) {
+        alert("يرجى إدخال رابط الفيديو أو اختيار ملف وانتظار رفعه");
+        return;
+      }
+
+      if (l.startsWith("content://") || l.startsWith("file://") || l.startsWith("blob:")) {
+        alert("جاري رفع الفيديو إلى السيرفر... يرجى الانتظار حتى اكتمال الرفع بنجاح.");
+        return;
+      }
+
+      let btn = document.getElementById("addEpBtn");
+      if (btn) {
+        btn.disabled = true;
+        btn.innerText = "⏳ جاري الحفظ...";
+      }
+
       let item = getItemByFirebaseId(fid);
       let ne = [...item.episodes, { title: t, video: l }];
       await updateDoc(doc(db, "movies", fid), { episodes: ne });
-      window.tempVideoData = "";
-      alert("✅ تمت");
+      window.selectedEpVideoFile = null;
+      window.uploadedEpVideoPublicUrl = "";
+      alert("✅ تمت إضافة الحلقة بنجاح");
       openDetails(fid);
     };
 
