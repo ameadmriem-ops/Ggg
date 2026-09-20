@@ -31,6 +31,9 @@
     .media-preview-box{margin-top:10px;text-align:center;display:none}
     .media-preview-box img{max-width:140px;aspect-ratio:2/3;object-fit:cover;border-radius:8px;border:1px solid #333;display:inline-block}
     .media-preview-box video{width:100%;max-height:220px;border-radius:8px;background:#000;border:1px solid #333;display:inline-block}
+    .video-player-container{margin-top:12px;background:#000;border-radius:10px;overflow:hidden;border:1px solid #222;position:relative;min-height:200px;display:flex;align-items:center;justify-content:center}
+    .video-error-banner{display:none;background:#1a0505;border:1px solid #e50914;color:#ff8888;padding:16px;border-radius:8px;margin-top:12px;text-align:right;font-size:14px;line-height:1.6}
+    .video-error-banner b{color:#fff}
     @keyframes spin{to{transform:rotate(360deg)}}
   </style>
   <script type="importmap">
@@ -177,8 +180,57 @@
       let item = getItemByFirebaseId(fid);
       if (!item) return;
       let ep = item.episodes[idx];
-      let v = ep.video ? `<video controls autoplay playsinline preload="metadata" src="${ep.video}" style="width:100%;max-height:70vh;background:#000"></video>` : `<div style="padding:40px;text-align:center;color:#888">لا يوجد فيديو</div>`;
-      main.innerHTML = `<button class="back-btn" onclick="openDetails('${item.firebaseId}')">← رجوع</button><div style="padding:12px"><h2>${ep.title}</h2><div style="margin-top:12px;background:#000;border-radius:10px;overflow:hidden;border:1px solid #222">${v}</div></div>`;
+      let rawVideoUrl = (ep.video || "").trim();
+
+      if (!rawVideoUrl) {
+        main.innerHTML = `<button class="back-btn" onclick="openDetails('${item.firebaseId}')">← رجوع</button><div style="padding:12px"><h2>${ep.title}</h2><div style="padding:40px;text-align:center;color:#888">لا يوجد رابط فيديو متوفر</div></div>`;
+        return;
+      }
+
+      main.innerHTML = `
+        <button class="back-btn" onclick="openDetails('${item.firebaseId}')">← رجوع</button>
+        <div style="padding:12px">
+          <h2>${ep.title}</h2>
+          <div class="video-player-container">
+            <video id="playerVideo" controls autoplay playsinline preload="metadata" src="${rawVideoUrl}" style="width:100%;max-height:70vh;background:#000;display:block"></video>
+          </div>
+          <div id="videoErrorBanner" class="video-error-banner"></div>
+        </div>`;
+
+      let videoEl = document.getElementById("playerVideo");
+      let errBanner = document.getElementById("videoErrorBanner");
+
+      if (videoEl) {
+        videoEl.onerror = () => {
+          let err = videoEl.error;
+          let msg = "تعذر تشغيل الفيديو من الرابط المباشر.";
+          if (err) {
+            switch (err.code) {
+              case 1:
+                msg = "تم إيقاف تحميل الفيديو بواسطة المستخدم.";
+                break;
+              case 2:
+                msg = "فشل في الاتصال بالشبكة أثناء تحميل الفيديو.";
+                break;
+              case 3:
+                msg = "خطأ في فك ترميز الفيديو (تأكد أن صيغة الفيديو مدعومة).";
+                break;
+              case 4:
+                msg = "تعذر تشغيل الفيديو: إما أن الرابط غير صالح أو خادم الملف يمنع الوصول المباشر أو لا يدعم النطاقات (Range Requests).";
+                break;
+            }
+          }
+          if (errBanner) {
+            errBanner.style.display = "block";
+            errBanner.innerHTML = `
+              <b>⚠️ تنبيه في التشغيل:</b><br>
+              ${msg}<br>
+              <div style="margin-top:8px;font-size:12px;color:#aaa;direction:ltr;text-align:left;word-break:break-all">
+                URL: ${rawVideoUrl}
+              </div>`;
+          }
+        };
+      }
     };
 
     window.openSearch = () => {
@@ -260,7 +312,7 @@
             <div id="posterPreview" class="media-preview-box"></div>
           </label>
 
-          <input id="addVideo" class="input" placeholder="رابط الفيديو أو اختر من الهاتف أدناه">
+          <input id="addVideo" class="input" placeholder="رابط الفيديو (مثل: https://pixeldrain.com/api/file/...) أو اختر ملفاً">
           
           <!-- خانة اختيار أو إضافة فيديو أو صورة للفيلم -->
           <label class="drop-zone" for="videoFile">
@@ -383,7 +435,7 @@
         </div>
         <div style="padding:12px;display:flex;flex-direction:column;gap:10px;background:#111;margin:8px;border-radius:10px;border:1px solid #222">
           <input id="epTitle" class="input" placeholder="عنوان الحلقة">
-          <input id="epVideoLink" class="input" placeholder="رابط الفيديو أو اختر من الهاتف أدناه">
+          <input id="epVideoLink" class="input" placeholder="رابط الفيديو (مثل: https://pixeldrain.com/api/file/...) أو اختر ملفاً">
           
           <label class="drop-zone" for="epVideoFile">
             🎬 إضافة فيديو أو صورة (الحلقة)

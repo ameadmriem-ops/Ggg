@@ -140,12 +140,14 @@ class MainActivity : ComponentActivity() {
                 databaseEnabled = true
                 mediaPlaybackRequiresUserGesture = false
                 allowFileAccess = true
+                allowContentAccess = true
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 cacheMode = WebSettings.LOAD_DEFAULT
                 useWideViewPort = true
                 loadWithOverviewMode = true
                 builtInZoomControls = false
                 displayZoomControls = false
+                userAgentString = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
             }
 
             // JavaScript Bridge named "Android" for WebView ↔ Android interaction
