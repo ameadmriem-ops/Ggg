@@ -3,11 +3,14 @@ package com.example
 import android.annotation.SuppressLint
 import android.content.pm.ActivityInfo
 import android.graphics.Color
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
@@ -18,6 +21,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,11 +46,37 @@ class MainActivity : ComponentActivity() {
     private var fullscreenContainer: FrameLayout? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
     private var customView: View? = null
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private lateinit var fileChooserLauncher: ActivityResultLauncher<Intent>
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // File picker launcher for WebView <input type="file">
+        fileChooserLauncher = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            val data: Intent? = result.data
+            var results: Array<Uri>? = null
+            if (result.resultCode == RESULT_OK && data != null) {
+                val dataString = data.dataString
+                val clipData = data.clipData
+                if (clipData != null) {
+                    val count = clipData.itemCount
+                    val uris = ArrayList<Uri>(count)
+                    for (i in 0 until count) {
+                        uris.add(clipData.getItemAt(i).uri)
+                    }
+                    results = uris.toTypedArray()
+                } else if (dataString != null) {
+                    results = arrayOf(Uri.parse(dataString))
+                }
+            }
+            filePathCallback?.onReceiveValue(results)
+            filePathCallback = null
+        }
 
         // 1. Initialize AdMob Manager and SDK
         adMobManager = AdMobRewardedManager(applicationContext)
@@ -159,6 +190,31 @@ class MainActivity : ComponentActivity() {
                     customViewCallback?.onCustomViewHidden()
                     customViewCallback = null
                     requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                }
+
+                override fun onShowFileChooser(
+                    webView: WebView?,
+                    filePathCallback: ValueCallback<Array<Uri>>?,
+                    fileChooserParams: FileChooserParams?
+                ): Boolean {
+                    this@MainActivity.filePathCallback?.onReceiveValue(null)
+                    this@MainActivity.filePathCallback = filePathCallback
+
+                    val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "*/*"
+                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+                    }
+
+                    try {
+                        fileChooserLauncher.launch(intent)
+                        return true
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error launching file chooser", e)
+                        this@MainActivity.filePathCallback?.onReceiveValue(null)
+                        this@MainActivity.filePathCallback = null
+                        return false
+                    }
                 }
             }
 
